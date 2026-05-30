@@ -54,6 +54,29 @@ println!("Transfer CR: {:.2}", transfer_cr);
 println!("Overall CR: {:.2}", crab.knowledge_conservation_ratio());
 ```
 
+## Ecosystem
+
+hermit-crab handles **agent migration** across the PLATO Nervous System.
+
+**Where this sits:** Cross-layer. Tracks agent movement between rooms managed by [plato-nervous](https://github.com/SuperInstance/plato-nervous), preserving compression ratio (CR) context during transitions.
+
+**Signal chain:**
+```
+Room A (plato-nervous) → hermit-crab (migration + CR tracking) → Room B (plato-nervous)
+```
+
+| Repo | Role |
+|------|------|
+| [plato-nervous](https://github.com/SuperInstance/plato-nervous) | Core signal chain — provides room state and CR metrics for migration |
+| [plato-vision-jepa](https://github.com/SuperInstance/plato-vision-jepa) | Vision perception layer |
+| [plato-audio-jepa](https://github.com/SuperInstance/plato-audio-jepa) | Audio perception layer |
+| [concrete-token-demo](https://github.com/SuperInstance/concrete-token-demo) | CLI demo of the distillation pipeline |
+| [plato-browser](https://github.com/SuperInstance/plato-browser) | Browser-native demo |
+| [luciddreamer-ai](https://github.com/SuperInstance/luciddreamer-ai) | Cloud-layer podcast — persona transitions are a form of agent migration |
+| [openconstruct-kernel](https://github.com/SuperInstance/openconstruct-kernel) | Hardware layer — context for where agents can migrate |
+
+See [DEPENDENCIES.md](./DEPENDENCIES.md) for detailed dependency and data flow information.
+
 ## License
 
 MIT
