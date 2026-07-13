@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hermit-crab-memory-track",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "MEMORY_DB",
+      "database_name": "hermit-crab-memory-db",
+      "database_id": "f49c9a90-b4a0-4a55-bd58-0bfa24dbafb6"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "MEMORY_KV",
+      "id": "d7660e0691cc4a06bf189a14695cbe1d"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEMORY_R2",
+      "bucket_name": "hermit-crab-memory-cold"
+    }
+  ]
+}
