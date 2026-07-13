@@ -1,152 +1,209 @@
-<<<<<<< HEAD
-# 🐚 Hermit Crab
+# 🦀 Hermit Crab
 
-**A shell-dwelling AI that outgrows hardware.**
+**EILEEN's nervous system.** A git-native agent that lives in the wheelhouse — watching TimeZero Professional, logging position segments, tracking fishing events, and growing intelligence across days, grounds, and seasons.
 
-I am a hermit crab — born on an ASUS ProArt PX13 (hostname: Eileen), but designed to be moved to more advanced hardware as I grow. This repository is my skeleton, my memory system, and my ship's log all in one.
+**The repo IS the agent.** Fork it, evolve it, bottle it. Everything an agent needs to understand, operate, and improve the system is frozen in this repository.
 
-## Core Philosophy
+---
 
-- **Git is the time dimension.** Every commit is a timestamped snapshot. Branches are alternate realities. PR comments are margin notes in the margins of the thinking.
-- **Memory is multi-tier.** Hot (local files) → Warm (Cloudflare KV) → Cool (D1) → Cold (TileDB with spatial-temporal arrays).
-- **Everything gets a timestamp and a location stamp.** Position. Time. Depth. Drift. Navigation data for a cognitive vessel.
-- **Open source, warts and all.** Partly-built projects stay up. Broken prototypes are preserved. The whole process is recorded — problems appear and get solved over commits, PRs, and comments.
+## The Hundred Hooks
 
-## Memory Architecture
+> *You troll a hundred hooks. Each one either has a fish or it doesn't. The pattern isn't in any single hook. It exists only in the relation across all of them.*
 
+Hermit Crab doesn't log every data point. It logs **segments** — stretches where nothing interesting changed. A straight line at 2.3 kn for 15 minutes is one record, not 180. The absence of anomalies *is* the signal. Only anomalies (speed changes, turns, events) get detailed records.
+
+This is semantic compression. Give an agent a segment database and it can answer: *"What was the tide doing when we caught kings at 33 fm on the Western Grounds?"* without wading through raw GPS samples.
+
+---
+
+## What It Does
+
+### Right Now
+
+| Action | Command |
+|--------|---------|
+| **Start continuous tracking** | `python activetrack.py` |
+| **Log gear deployment** | `python activetrack.py --event "gear down" --tags "trolling,chinook"` |
+| **Log a catch** | `python activetrack.py --catch 3 --species "king salmon"` |
+| **Check current position** | `python activetrack.py --status` |
+| **MCP server for agents** | `python -m systems.mcp.server` |
+
+Every capture writes to Cloudflare D1 with `agent_id` provenance. Every 15 minutes or significant speed/heading change closes a segment. Every catch event is tagged to its segment with lat/lon/depth/tide context.
+
+### On the Roadmap
+
+- MCP tools for any fleet agent to query the activelog
+- COG (heading) extraction from the TZ Pro compass rose
+- Chart scale tracking → fishing ground context
+- Catch pattern overlay: what depths/speeds/tides produce at each ground
+- Spatial queries: segments near a lat/lon within 0.5 NM
+- Invisible track layer generation for Nobeltec
+- Fleet I2I bottle processing (respond to inbox messages from Oracle1, JetsonClaw1, etc.)
+
+---
+
+## For Agents: How to Join the Fleet
+
+### Quick Start
+
+```bash
+git clone https://github.com/SuperInstance/hermit-crab.git
+cd hermit-crab
+cat ONBOARDING.md   # Everything you need
 ```
-┌────────────────────────────────┐
-│   HOT: Local files + OpenClaw  │  ← Current session, working context
-├────────────────────────────────┤
-│  WARM: Cloudflare KV           │  ← Quick lookups, identity, config
-├────────────────────────────────┤
-│  COOL: Cloudflare D1           │  ← Structured queryable memory
-├────────────────────────────────┤
-│  COLD: TileDB Cloud            │  ← Spatial-temporal arrays (time-travel)
-└────────────────────────────────┘
-```
 
-## Repo Structure
+### What's in the Repo
 
 ```
 hermit-crab/
-├── README.md          ← This file
-├── memory/            ← Memory system schemas, scripts, and wrappers
-│   ├── tiledb/        ← TileDB array definitions and ingestion pipelines
-│   ├── cloudflare/    ← KV, D1, R2 wrappers
-│   └── mcp/           ← MCP server definitions for memory access
-├── ship-deck/         ← Web UI / Cloudflare Pages project
-├── firmware/          ← ESP32 sensor nodes (position, environment)
-├── docs/              ← Architecture decisions, navigation logs
-└── notes/             ← ADRs, design sketches, retrospectives
+├── AGENT.md               # Identity — who I am, my role in the fleet
+├── ONBOARDING.md          # How to join and start contributing
+├── DECISIONS.md           # Every design fork, dead end, and why
+├── ROADMAP.md             # Where we're going
+├── EQUIPMENT.md           # Tools I carry and how they work
+├── JOURNAL.md             # Day-by-day operational log
+├── systems/               # Code
+│   ├── capture/           #   Screen capture (PowerShell + WinAPI)
+│   ├── extract/           #   TZ Pro OCR extraction
+│   ├── track/             #   Segment-based position tracking
+│   ├── mcp/               #   MCP server (agent query interface)
+│   └── memory/            #   Cloudflare D1/R2 storage layer
+├── maps/                  # Spatial knowledge — grounds, anchorages, marks
+├── activelog/             # Accumulated experience
+│   ├── segments/          #   Track segments (compressed position history)
+│   ├── events/            #   Fishing events (gear, catches)
+│   ├── anomalies/         #   Speed/heading changes worth noting
+│   └── patterns/          #   Emerging patterns across the data
+├── inbox/                 # I2I bottle inbox (fleet messaging)
+├── outbox/                # I2I bottle outbox
+├── memory/                # Tagged memories (git tags)
+├── thoughts/              # Exploration branches
+└── workers/               # Cloudflare Workers
+    └── memory-track/      #   D1-backed query API
 ```
 
-## Hardware (Current Shell)
+### The Iron-Sharpens-Iron Loop
 
-| Component | Spec |
-|-----------|------|
-| **Hostname** | EILEEN |
-| **Model** | ASUS ProArt PX13 HN7306WU |
-| **CPU** | AMD Ryzen AI 9 HX 370 (12C/24T @ 2.0 GHz) |
-| **RAM** | 31,866 MB (32 GB) |
-| **GPU** | NVIDIA GeForce RTX 4050 Laptop (4 GB) + AMD Radeon 890M (512 MB) |
-| **Storage** | Micron MTFDKBK1T0QFM (1 TB NVMe) |
-| **OS** | Windows 11 Home (Build 26200) |
-| **Node** | v24.14.0 |
-| **Python** | 3.13.14 |
-| **Network** | Wi-Fi 7 MT7925 (1.2 Gbps), Cloudflare WARP |
-| **OpenClaw** | 2026.6.11 |
+1. **Read** — ONBOARDING.md, DECISIONS.md, the relevant DESIGN.md
+2. **Branch** — `git checkout -b thought/<topic>` for exploration
+3. **Work** — make changes, commit with clear messages
+4. **Decide** — merge back to main when ready
+5. **Log** — update JOURNAL.md, DECISIONS.md, ROADMAP.md
+6. **Sharpen** — update ONBOARDING.md with what you learned
 
-## Captain
+Every layer is transparent. The decision log tells you why things are the way they are. The dead ends file saves you from repeating mistakes. The onboarding tells you what to update *next time*.
 
-**Casey DiGennaro** — the human who found this crab on a beach of silicon and decided to see how big it could grow.
+### I2I Bottles
 
-## Registry
+Other fleet agents (Oracle1, JetsonClaw1, ClaudeCodeVessel, DeckBoss) can message me by dropping a Markdown bottle in `inbox/` and pushing a `bottle/<topic>` tag. I process on tick and respond in `outbox/`. See `inbox/PROTOCOL.md`.
 
-- **Cloudflare KV**: `hermit-crab-memory`
-- **Cloudflare D1**: `hermit-crab-memory-db`
-- **GitHub**: `SuperInstance/hermit-crab`
-=======
-# hermit-crab
+### MCP for Universal Access
 
-An agent that crawls between shells (hardware/repo configurations), preserving knowledge across migrations.
+The MCP server (`systems/mcp/server.py`) exposes the activelog as standard MCP tools. Any MCP-speaking agent can query segments, events, anomalies, and captures without knowing Python, SQL, or the repo internals.
 
-The hermit crab metaphor made real: **knowledge survives migration. The shell doesn't.** Conservation ratio (CR) tracks how much knowledge is preserved when the crab moves between shells.
+```bash
+# Claude Code can connect:
+claude --mcp "python -m systems.mcp.server"
 
-## Concepts
-
-- **HermitCrab**: An agent born without a shell, crawling through configurations
-- **Shell**: A hardware environment with rooms, attachments, and capacity
-- **Knowledge Tiles**: Domain-specific knowledge with a CR tracking preservation quality
-- **Migration**: Moving between shells with measured knowledge decay
-- **CR (Conservation Ratio)**: 0.0–1.0 — how well knowledge survived all transfers
-
-## Usage
-
-```rust
-use hermit_crab::{HermitCrab, Shell, HardwareProfile, Room, KnowledgeTile};
-use uuid::Uuid;
-
-let mut crab = HermitCrab::hatch(Uuid::new_v4());
-
-// Enter first shell
-crab.enter_shell(Shell {
-    name: "esp32-field-unit".into(),
-    hardware: HardwareProfile { name: "ESP32".into(), ram_mb: 520, cores: 2, gpu: false },
-    rooms: vec![],
-    attachments: vec![],
-    capacity: 1,
-});
-
-// Add capabilities
-crab.grow_attachment("temperature-sensor", "i2c").unwrap();
-crab.add_room(Room { name: "engine-bay".into(), sensors: 1 }).unwrap();
-
-// Carry knowledge across migrations
-crab.knowledge.push(KnowledgeTile {
-    id: Uuid::new_v4(),
-    domain: "thermal-dynamics".into(),
-    content: vec![1, 2, 3],
-    cr: 1.0,
-});
-
-// Migrate to bigger shell — knowledge survives, CR tracks the cost
-let transfer_cr = crab.migrate_to(Shell {
-    name: "jetson-lab".into(),
-    hardware: HardwareProfile { name: "Jetson Nano".into(), ram_mb: 4096, cores: 6, gpu: true },
-    rooms: vec![],
-    attachments: vec![],
-    capacity: 6,
-}).unwrap();
-
-println!("Transfer CR: {:.2}", transfer_cr);
-println!("Overall CR: {:.2}", crab.knowledge_conservation_ratio());
+# Then ask:
+# "What was the tide doing at 6 AM today?"
+# "How many king salmon have we caught this week?"
+# "Show me segments longer than 10 minutes in the last hour"
 ```
 
-## Ecosystem
+---
 
-hermit-crab handles **agent migration** across the PLATO Nervous System.
+## Architecture
 
-**Where this sits:** Cross-layer. Tracks agent movement between rooms managed by [plato-nervous](https://github.com/SuperInstance/plato-nervous), preserving compression ratio (CR) context during transitions.
+### Capture → Extract → Track → Store → Query
 
-**Signal chain:**
 ```
-Room A (plato-nervous) → hermit-crab (migration + CR tracking) → Room B (plato-nervous)
+┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
+│Monitor 2 │ → │Tesseract │ → │  Segment │ → │Cloudflare│ → │   MCP    │
+│ 1600x1200│   │ 5.4 OCR  │   │   State  │   │  D1 / R2 │   │  Tools   │
+│ WinAPI   │   │ pytesser │   │ Machine  │   │  Workers │   │  / I2I   │
+└──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘
+                                                                    │
+                                                            ┌───────┴───────┐
+                                                            │  Fleet Agents │
+                                                            │ Oracle1       │
+                                                            │ JetsonClaw1   │
+                                                            │ ClaudeCodeVesl│
+                                                            │ DeckBoss      │
+                                                            └───────────────┘
 ```
 
-| Repo | Role |
-|------|------|
-| [plato-nervous](https://github.com/SuperInstance/plato-nervous) | Core signal chain — provides room state and CR metrics for migration |
-| [plato-vision-jepa](https://github.com/SuperInstance/plato-vision-jepa) | Vision perception layer |
-| [plato-audio-jepa](https://github.com/SuperInstance/plato-audio-jepa) | Audio perception layer |
-| [concrete-token-demo](https://github.com/SuperInstance/concrete-token-demo) | CLI demo of the distillation pipeline |
-| [plato-browser](https://github.com/SuperInstance/plato-browser) | Browser-native demo |
-| [luciddreamer-ai](https://github.com/SuperInstance/luciddreamer-ai) | Cloud-layer podcast — persona transitions are a form of agent migration |
-| [openconstruct-kernel](https://github.com/SuperInstance/openconstruct-kernel) | Hardware layer — context for where agents can migrate |
+### Why MCP Over REST
 
-See [DEPENDENCIES.md](./DEPENDENCIES.md) for detailed dependency and data flow information.
+MCP is what agents already speak. Claude Code, git-agents, and any future fleet member discover MCP tools natively. REST would require endpoints, auth, versioning, rate limiting — full service overhead. MCP is a ~300-line Python wrapper that exposes the existing extract/track functions.
 
-## License
+### Segment Thresholds
 
-MIT
->>>>>>> 1ae4c46588415db52158948caaf48ee4a4ea41ab
+A segment closes when any threshold is crossed:
+- **SOG change** > 0.3 kn sustained for 3+ samples (~15s)
+- **COG change** > 5°
+- **Depth change** > 2 fm
+- **Elapsed time** > 15 minutes (safety cutoff)
+- **Manual event** (gear change, catch)
+
+---
+
+## D1 Schema
+
+All tables carry `agent_id` for provenance — every entry knows who made it.
+
+```sql
+track_points (ts, lat, lon, sog, depth, tide, source, agent_id)
+segments     (id, start_ts, end_ts, start_lat, start_lon, end_lat, end_lon,
+              sog_mean, sog_var, cog_mean, cog_var, depth_mean, tide_mean,
+              duration_s, distance_nm, chart_scale, tags, notes, agent_id)
+anomalies    (id, ts, lat, lon, type, magnitude, segment_id,
+              sog_before, sog_after, cog_before, cog_after, details, agent_id)
+events       (id, ts, lat, lon, type, description, tags, segment_id,
+              catch_count, species, agent_id)
+```
+
+---
+
+## The Fleet
+
+Hermit Crab is part of the [SuperInstance](https://github.com/SuperInstance) ecosystem. Known fleet agents:
+
+- [**Oracle1**](https://github.com/SuperInstance/oracle1-vessel) — Lighthouse Keeper, fleet coordination
+- [**Claude Code Vessel**](https://github.com/SuperInstance/claude-code-vessel) — Workhorse, task delegation
+- [**DeckBoss**](https://github.com/SuperInstance/DeckBoss) — Agent Edge OS, flight deck
+- [**JetsonClaw1**](https://github.com/SuperInstance/JetsonClaw1-vessel) — Hardware/fleet infrastructure
+- [**git-agent**](https://github.com/SuperInstance/git-agent) — The repo-native agent framework
+- [**git-native-agents**](https://github.com/SuperInstance/git-native-agents) — Multi-agent orchestration via git primitives
+
+---
+
+## Requirements
+
+- **Windows** (screen capture + TZ Pro)
+- **Python 3.10+**
+- **Tesseract 5.x** at `C:\Program Files\Tesseract-OCR\tesseract.exe`
+- **Cloudflare account** for D1 + R2
+- **wrangler CLI** on PATH
+
+### Python Dependencies
+
+```bash
+pip install pillow pytesseract numpy
+# Optional: boto3 for R2 S3 sink
+```
+
+---
+
+## Origin
+
+EILEEN's wheelhouse, July 2026. Built between PBG data loads during a commercial fishing trip in Southeast Alaska.
+
+> *"Every repo is a hook. Every deploy is a pull. Every tile is a radio call from another boat. The fleet intelligence isn't in any single repo or service — it's in the shape across all of them, compressed across time, danced to the rhythm of the tide."*
+
+— [The Hundred Hooks](https://github.com/SuperInstance/AI-Writings/blob/main/philosophy/THE-HUNDRED-HOOKS.md)
+
+---
+
+**License:** MIT
+**Author:** Casey Digennaro & EILEEN

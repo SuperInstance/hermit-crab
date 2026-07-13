@@ -8,3 +8,8 @@ tzpro_*.png
 *.png
 !maps/**/*.png
 .DS_Store
+.DS_Store?
+*.swp
+*.swo
+*~
+*_prompt.txt
