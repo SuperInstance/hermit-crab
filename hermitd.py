@@ -279,8 +279,12 @@ td{{padding:3px 6px;border-bottom:1px solid #21262d}}
  def log_message(self,*a):pass
 
 def run_dash(stop):
- s=HTTPServer(("127.0.0.1",CFG["port"]),DashH);log.info(":8%d",CFG["port"])
- while not stop.is_set():s.handle_request()
+ s=HTTPServer(("127.0.0.1",CFG["port"]),DashH)
+ log.info("Dashboard on :%d",CFG["port"])
+ s.timeout=1
+ while not stop.is_set():
+  try:s.handle_request()
+  except Exception as e:log.warning("Dash: %s",e)
 
 def main():
  import argparse
@@ -292,21 +296,34 @@ def main():
  if a.status:
   with _live_lock:print(json.dumps({"current":live["current"],"captures":live["captures"]},indent=2,default=str))
   return
- # Start NMEA splitter (COM6 -> TCP broadcast), then connect reader
+ # Start NMEA splitter if not already running on port 6006
  try:
      import subprocess
-     splitter_path=WORKSPACE/"nmea_splitter.py"
-     if splitter_path.exists():
-         sp=subprocess.Popen([sys.executable,str(splitter_path)],
-             stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-         log.info(f"NMEA splitter started (pid {sp.pid})")
-         time.sleep(1)  # let it open COM6
+     sock=type('',(),{})()
+     try:
+         sock=socket.socket(socket.AF_INET,socket.SOCK_STREAM);sock.settimeout(0.5)
+         sock.connect(("127.0.0.1",6006));sock.close()
+         log.info("NMEA splitter already running on :6006")
+     except:
+         splitter_path=WORKSPACE/"nmea_splitter.py"
+         if splitter_path.exists():
+             sp=subprocess.Popen([sys.executable,str(splitter_path)],
+                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+             log.info(f"NMEA splitter started (pid {sp.pid})")
+             time.sleep(1)
  except Exception as e:
      log.warning(f"Could not start NMEA splitter: {e}")
  if _open_nmea():threading.Thread(target=_nmea_reader,daemon=True).start()
- stop=threading.Event();threading.Thread(target=capture_loop,args=(stop,),daemon=True).start();threading.Thread(target=run_dash,args=(stop,),daemon=True).start()
+ stop=threading.Event();threading.Thread(target=capture_loop,args=(stop,),daemon=True).start();# HTTP server on MAIN thread (not daemon - keeps process alive)
+ s=HTTPServer(("127.0.0.1",CFG["port"]),DashH)
+ s.timeout=0.5
  print(f"hermitd http://127.0.0.1:{CFG['port']}|{CFG['interval']}s|{CFG['heartbeat']//60}min")
- try:[time.sleep(1)for _ in iter(lambda:not stop.is_set(),True)]
- except KeyboardInterrupt:stop.set();time.sleep(1);n=buffer_flush();print(f"\nFlushed {n}")
+ try:
+     while not stop.is_set():
+         try:s.handle_request()
+         except KeyboardInterrupt:raise
+         except:pass
+ except KeyboardInterrupt:
+     stop.set();time.sleep(1);n=buffer_flush();print(f"\nFlushed {n}")
 
 if __name__=="__main__":main()
