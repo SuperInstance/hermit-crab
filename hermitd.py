@@ -5,7 +5,14 @@ import json,logging,os,sys,time,threading,math,struct,ctypes,socket
 from datetime import datetime,timezone
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from typing import Optional
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """HTTPServer that handles each request in its own thread.
+    Prevents a single stuck/broken connection (CLOSE_WAIT from Edge) from
+    blocking all other clients."""
+    daemon_threads = True
 
 WORKSPACE=Path(__file__).parent.resolve();sys.path.insert(0,str(WORKSPACE))
 CFG={"interval":5,"heartbeat":3600,"port":8654}
@@ -42,7 +49,7 @@ def _open_nmea():
     if h==INVALID_HANDLE: log.warning("NMEA: can't open COM6 (locked by TZ Pro)");return False
     _nmea_handle=h
     dcb=ctypes.create_string_buffer(28)
-    struct.pack_into('IHHIIHHHHHHBBBBB',dcb,0,28,4800,0,0,0,0,0,0,0,0,8,0,0,0,0)
+    struct.pack_into('IHHIIHHHHHHBBBBB',dcb,0,28,4800,0,0,0,0,0,0,0,0,0,8,0,0,0,0)
     kernel32.SetCommState(_nmea_handle,ctypes.byref(dcb))
     to=ctypes.create_string_buffer(20)
     struct.pack_into('IIIII',to,0,100,0,0,0,0)
@@ -279,7 +286,7 @@ td{{padding:3px 6px;border-bottom:1px solid #21262d}}
  def log_message(self,*a):pass
 
 def run_dash(stop):
- s=HTTPServer(("127.0.0.1",CFG["port"]),DashH)
+ s=ThreadingHTTPServer(("127.0.0.1",CFG["port"]),DashH)
  log.info("Dashboard on :%d",CFG["port"])
  s.timeout=1
  while not stop.is_set():
@@ -305,18 +312,22 @@ def main():
          sock.connect(("127.0.0.1",6006));sock.close()
          log.info("NMEA splitter already running on :6006")
      except:
-         splitter_path=WORKSPACE/"nmea_splitter.py"
+         bridge_path=WORKSPACE/"nmea-bridge"/"nmea_bridge.py"
+         legacy_path=WORKSPACE/"nmea_splitter.py"
+         splitter_path = bridge_path if bridge_path.exists() else legacy_path
          if splitter_path.exists():
              sp=subprocess.Popen([sys.executable,str(splitter_path)],
-                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-             log.info(f"NMEA splitter started (pid {sp.pid})")
+                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                 cwd=str(splitter_path.parent))
+             log.info(f"NMEA bridge started (pid {sp.pid}): {splitter_path.name}")
              time.sleep(1)
  except Exception as e:
      log.warning(f"Could not start NMEA splitter: {e}")
  if _open_nmea():threading.Thread(target=_nmea_reader,daemon=True).start()
  stop=threading.Event();threading.Thread(target=capture_loop,args=(stop,),daemon=True).start();# HTTP server on MAIN thread (not daemon - keeps process alive)
- s=HTTPServer(("127.0.0.1",CFG["port"]),DashH)
+ s=ThreadingHTTPServer(("127.0.0.1",CFG["port"]),DashH)
  s.timeout=0.5
+ log.info("Dashboard on :%d (threading mode)",CFG["port"])
  print(f"hermitd http://127.0.0.1:{CFG['port']}|{CFG['interval']}s|{CFG['heartbeat']//60}min")
  try:
      while not stop.is_set():
