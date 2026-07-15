@@ -1,1 +1,9 @@
 /target
+
+__pycache__/
+*.pyc
+*.pyo
+.env
+outbox/*.json
+outbox/*.log
+activetrack_state.json

@@ -17,6 +17,7 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 WORKSPACE=Path(__file__).parent.resolve();sys.path.insert(0,str(WORKSPACE))
 CFG={"interval":5,"heartbeat":3600,"port":8654}
 BUFFER_PATH=WORKSPACE/"cold"/"buffer.jsonl"
+ACTIVETRACK_STATE=WORKSPACE/"activetrack_state.json"
 log=logging.getLogger("hermitd")
 live={"current":None,"segment":None,"segment_history":[],"samples":[],"uptime":time.time(),"captures":0,"errors":0}
 _live_lock=threading.Lock()
@@ -162,6 +163,15 @@ def close_segment(seg:dict)->dict:
         "sog_mean":round(mean,2),"sog_var":round(var,4),"duration_s":duration_s,"distance_nm":round(dist,3),
         "chart_scale":seg.get("chart_scale")}
 
+# ── ActiveTrack state reader ──
+def read_activetrack() -> Optional[dict]:
+    try:
+        if ACTIVETRACK_STATE.exists():
+            return json.loads(ACTIVETRACK_STATE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return None
+
 # ── buffer ──
 def buffer_append(s:dict)->None:
  BUFFER_PATH.parent.mkdir(parents=True,exist_ok=True)
@@ -231,9 +241,36 @@ def capture_loop(stop):
 # ── HTTP dashboard ──
 class DashH(BaseHTTPRequestHandler):
  def do_GET(self):
+  if self.path=="/vessel":
+   at=read_activetrack()
+   data={"active":False,"segment":None,"window":[],"track_count":0,"age_s":None}
+   if at:
+    win=at.get("window",[])
+    seg=at.get("segment",{})
+    last=win[-1] if win else None
+    age=None
+    if last and last.get("ts"):
+     try:age=round(time.time()-datetime.fromisoformat(last["ts"]).timestamp(),1)
+     except:pass
+    data={"active":True,
+          "position":{"lat":last["lat"],"lon":last["lon"],"sog":last["sog"],"cog":last.get("cog")} if last else None,
+          "segment":{"id":seg.get("id"),"closed":seg.get("closed",False),
+                      "start_ts":seg.get("start_ts"),"duration":len(seg.get("sog_samples",[]))*5
+                      } if seg else None,
+          "window":[{"ts":w["ts"][11:19],"lat":w["lat"],"lon":w["lon"],"sog":w["sog"]} for w in win[-50:]],
+          "track_count":len(win),"age_s":age}
+   body=json.dumps(data,default=str).encode("utf-8")
+   self.send_response(200);self.send_header("Content-Length",str(len(body)))
+   self.send_header("Content-Type","application/json");self.send_header("Access-Control-Allow-Origin","*")
+   self.end_headers();self.wfile.write(body);return
+  if self.path=="/health":
+   body=json.dumps({"ok":True,"uptime":int(time.time()-live["uptime"]),"captures":live["captures"]}).encode("utf-8")
+   self.send_response(200);self.send_header("Content-Length",str(len(body)))
+   self.send_header("Content-Type","application/json");self.end_headers();self.wfile.write(body);return
   if self.path not in("/",):self.send_error(404);return
   with _live_lock:c=live["current"];smps=list(live["samples"])
-  h=self._page(c,smps).encode("utf-8")
+  at=read_activetrack()
+  h=self._page(c,smps,at).encode("utf-8")
   self.send_response(200);self.send_header("Content-Length",str(len(h)))
   self.send_header("Content-Type","text/html; charset=utf-8");self.end_headers();self.wfile.write(h)
  def _fmt(self,v,lat):
@@ -241,7 +278,7 @@ class DashH(BaseHTTPRequestHandler):
   d=int(abs(v));m=(abs(v)-d)*60;mi=int(m);dc=int((m-mi)*1000)
   h="N"if lat and v>=0 else"S"if lat else"W"if v<0 else"E"
   return f"{d}{D}{mi:02d}.{dc:03d}' {h}"
- def _page(self,c,smps):
+ def _page(self,c,smps,at=None):
   if c and c.get("lat"):lat_s=self._fmt(c["lat"],1);lon_s=self._fmt(c["lon"],0)
   else:lat_s=lon_s="---"
   vals=[x["sog"]for x in smps if x.get("sog")is not None];n=len(vals)
@@ -257,6 +294,59 @@ class DashH(BaseHTTPRequestHandler):
    lf2=self._fmt(x.get("lon"),0)if x.get("lon")else"---"
    ss=x.get("sog");ss=f"{ss:.2f}"if isinstance(ss,(int,float))else"---"
    rows+=f"<tr><td>{x['ts'][11:19]}</td><td>{lf}</td><td>{lf2}</td><td>{ss}</td></tr>\n"
+  # ── ActiveTrack widget ──
+  tw=""
+  if at and at.get("window"):
+   win=at["window"];seg=at.get("segment",{});last=win[-1] if win else None
+   age_s=None
+   if last and last.get("ts"):
+    try:age_s=int(time.time()-datetime.fromisoformat(last["ts"]).timestamp())
+    except:pass
+   nseg=len(at.get("segment_history",[]))if at.get("segment_history")else 0
+   seg_id=seg.get("id","")if seg and not seg.get("closed")else""
+   seg_dur=len(seg.get("sog_samples",[]))*5 if seg else 0
+   # build mini-map from last N points
+   pts=[(w["lat"],w["lon"])for w in win[-30:]if w.get("lat")and w.get("lon")]
+   map_html=""
+   if len(pts)>=2:
+    lats=[p[0]for p in pts];lons=[p[1]for p in pts]
+    min_lat,max_lat=min(lats),max(lats);min_lon,max_lon=min(lons),max(lons)
+    rlat=max(max_lat-min_lat,0.0001);rlon=max(max_lon-min_lon,0.0001)
+    # square aspect, 240x240
+    SZ=240;pad=12
+    def tx(la,lo):
+     x=pad+int((lo-min_lon)/rlon*(SZ-2*pad))if rlon>0 else SZ//2
+     y=SZ-pad-int((la-min_lat)/rlat*(SZ-2*pad))if rlat>0 else SZ//2
+     return x,y
+    dots=""
+    for i,p in enumerate(pts):
+     x,y=tx(p[0],p[1])
+     alpha=.3+.7*(i/(len(pts)-1))if len(pts)>1 else 1
+     r=3 if i==len(pts)-1 else 2
+     c="#7ee787"if i==len(pts)-1 else"#388bfd"
+     dots+=f'<circle cx="{x}" cy="{y}" r="{r}" fill="{c}" opacity="{alpha:.2f}"/>'
+    # grid lines
+    gs="";step=5
+    for i in range(step,SZ-2*pad,step):
+     gs+=f'<line x1="{pad}" y1="{pad+i}" x2="{SZ-pad}" y2="{pad+i}" stroke="#21262d" stroke-width="0.5"/>'
+     gs+=f'<line x1="{pad+i}" y1="{pad}" x2="{pad+i}" y2="{SZ-pad}" stroke="#21262d" stroke-width="0.5"/>'
+    map_html=f"""<svg viewBox="0 0 {SZ} {SZ}" style="width:240px;height:240px;display:block">
+<rect width="{SZ}" height="{SZ}" fill="#0d1117" rx="4"/>{gs}{dots}</svg>"""
+   at_lat=self._fmt(last["lat"],1)if last else"---"
+   at_lon=self._fmt(last["lon"],0)if last else"---"
+   at_sog=f'{last["sog"]:.2f}'if last and last.get("sog")is not None else"---"
+   at_age=f"{age_s}s"if age_s is not None else"---"
+   tw=f"""<h2 style="margin-top:12px">Vessel Track (ActiveTrack)</h2>
+<div style="display:flex;gap:16px;align-items:flex-start">
+<div style="min-width:240px">{map_html}</div>
+<div style="flex:1">
+<table><tr><th style="width:50%">Field</th><th>Value</th></tr>
+<tr><td>Position</td><td>{at_lat} / {at_lon}</td></tr>
+<tr><td>SOG</td><td><span style="color:#7ee787">{at_sog} kn</span></td></tr>
+<tr><td>Last update</td><td>{at_age} ago</td></tr>
+<tr><td>Track points</td><td>{len(win)}</td></tr>
+<tr><td>Open segment</td><td>{seg_id or "none"} ({seg_dur}s)</td></tr>
+</table></div></div>"""
   return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="1">
 <title>hermit-crab</title><style>
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -281,6 +371,7 @@ td{{padding:3px 6px;border-bottom:1px solid #21262d}}
 <div class="cd"><div class="lb">Depth</div><div class="vl c2">{dp} fm</div></div>
 <div class="cd"><div class="lb">Tide</div><div class="vl ct">{ti} ft</div></div></div>
 <div class="av"><span>5s: <b>{a5:.2f}</b></span><span>10s: <b>{a10:.2f}</b></span><span>20s: <b>{a20:.2f}</b> kn ({n} samples)</span><span style="color:#484f58">src:{src}</span></div>
+{tw}
 <h2>Last 5 captures</h2><table><tr><th>Time</th><th>Lat</th><th>Lon</th><th>SOG</th></tr>{rows}</table>
 <div id="ft">{ts}|cap:{live["captures"]}|up:{int(time.time()-live["uptime"])}s|NMEA+OCR</div></body></html>"""
  def log_message(self,*a):pass
