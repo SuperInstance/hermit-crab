@@ -1,0 +1,7 @@
+
+    Directory: C:\Users\casey\.openclaw\workspace\nmea-bridge
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a---           7/14/2026  3:28 PM          10577 nmea_bridge.py
+
