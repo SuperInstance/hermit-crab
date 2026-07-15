@@ -159,7 +159,8 @@ async def handle_client(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="NMEA Bridge — multi-port serial aggregator & TCP splitter"
+        description="NMEA Bridge — multi-port serial aggregator & TCP splitter",
+        allow_abbrev=False,  # prevent --port from silently matching --ports
     )
     p.add_argument(
         "--ports",
@@ -233,11 +234,16 @@ async def main() -> None:
         if not ports:
             log.warning("No NMEA ports auto-detected.")
             if IS_WINDOWS:
-                log.warning("Falling back to COM6 (common marine GPS port).")
-                ports = ["COM6"]
+                avail = list_all_ports()
+                if avail:
+                    devs = ", ".join(p["device"] for p in avail)
+                    log.warning("Available ports: %s. Try: --ports %s",
+                                devs, avail[0]["device"])
+                else:
+                    log.warning("No serial ports found. Is your GPS plugged in?")
             else:
                 log.warning("Try: python nmea_bridge.py --ports /dev/ttyUSB0")
-                sys.exit(1)
+            sys.exit(1)
 
     if not ports:
         log.error("No ports to read. Use --ports to specify or check connections.")
@@ -247,13 +253,18 @@ async def main() -> None:
     log.info("Broadcasting on TCP port %d", args.tcp_port)
     log.info("Connect apps to: localhost:%d", args.tcp_port)
 
+    # ── Start TCP server FIRST (so we fail fast on port conflict) ──
+    try:
+        server = await asyncio.start_server(
+            handle_client, "127.0.0.1", args.tcp_port
+        )
+    except OSError as e:
+        log.error("Cannot bind to port %d: %s", args.tcp_port, e)
+        log.error("Is another bridge instance already running?")
+        sys.exit(1)
+
     # ── Start serial readers ───────────────────────────────────────
     tasks = [read_serial(p, args.baud) for p in ports]
-
-    # ── Start TCP server (single listen port) ──────────────────────
-    server = await asyncio.start_server(
-        handle_client, "127.0.0.1", args.tcp_port
-    )
     tasks.append(server.serve_forever())
 
     try:

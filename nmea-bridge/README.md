@@ -92,7 +92,7 @@ Now point any app at `localhost:6006`.
 | **Signal K** | NMEA 0183 Data Source → TCP `127.0.0.1:6006` |
 | **Hermit Crab** | TCP `localhost:6006` (see `examples/hermit_crab_client.py`) |
 | **Any script** | `nc localhost 6006` or raw TCP socket to `127.0.0.1:6006` |
-| **Any device** | Bridge supports multiple TCP ports — use `--tcp-port` for dedicated ports per app |
+| **Isolated stream** | Run a second bridge instance with `--tcp-port 6007` for a separate port |
 
 Every client, regardless of protocol or application, gets **the exact same
 merged stream** — every sentence from every instrument, in real time.
@@ -109,16 +109,21 @@ merges everything into one stream:
 python nmea_bridge.py
 ```
 
-Auto-scan finds everything at the default baud. For mixed baud rates:
+Auto-scan finds everything at the default baud. For mixed baud rates,
+run separate bridge instances so each instrument gets its own baud rate
+and TCP port:
 
 ```bash
-# Manual: GPS at 4800, AIS at 38400
-python nmea_bridge.py --ports COM6,COM7 --baud 4800
-python nmea_bridge.py --ports COM6,COM7 --baud 38400
+# GPS on COM6 at 4800 baud → TCP port 6006
+python nmea_bridge.py --ports COM6 --baud 4800
+
+# AIS on COM7 at 38400 baud → TCP port 6007 (separate instance)
+python nmea_bridge.py --ports COM7 --baud 38400 --tcp-port 6007
 ```
 
-Better yet: run multiple bridge instances on different TCP ports, one per
-baud rate. Or write a short batch file that starts them all.
+GPS and AIS on different baud rates need separate bridge instances.
+Each instance listens on its own TCP port. Apps connect to whichever
+port has the data they need.
 
 ## Not Just NMEA
 
@@ -150,7 +155,7 @@ options:
   --baud BAUD       Baud rate (default: 4800)
   --tcp-port PORT   TCP listen port (default: 6006)
   --scan            Scan for NMEA ports and exit
-  --list            List all serial ports and exit
+  --list-ports      List all serial ports and exit
   --verbose, -v     Verbose logging
 ```
 
@@ -166,6 +171,48 @@ Start-Process -NoNewWindow python -ArgumentList "nmea_bridge.py" `
 
 Or create a Windows Scheduled Task that runs on login. No admin
 required (no drivers, no registry).
+
+## Platform Notes
+
+**Windows:** COM ports are auto-detected. Typical GPS ports are COM3–COM8.
+
+**Linux:** Replace COM ports with `/dev/ttyUSB0`, `/dev/ttyACM0`, etc.
+You may need to be in the `dialout` group to access serial devices.
+```bash
+sudo usermod -a -G dialout $USER
+# Log out and back in, then:
+python nmea_bridge.py --ports /dev/ttyUSB0
+```
+
+**macOS:** Replace COM ports with `/dev/tty.usbserial-*` or
+`/dev/tty.usbmodem-*`.
+
+**Baud rates:** Most marine NMEA 0183 uses 4800. AIS receivers often
+use 38400. Depth sounders may use 4800 or 9600. Try `--baud 4800`
+first, then `--scan` again with a different rate if nothing is found.
+
+## Troubleshooting
+
+**Nothing happens when I run it?**
+- Install pyserial: `pip install pyserial`
+- Check your device is plugged in and powered
+- Run `python nmea_bridge.py --scan` to detect NMEA-capable ports
+- Run `python nmea_bridge.py --list-ports` to see all serial ports
+
+**No NMEA ports detected?**
+- Try different baud rates (`--baud 9600`, `--baud 38400`)
+- Some instruments don't broadcast NMEA until they have a fix
+- On Linux, check permissions: `ls -l /dev/ttyUSB0`
+- On macOS, check System Information → USB for device presence
+
+**Can't connect to the bridge?**
+- Confirm it's running: look for "Broadcasting on TCP port 6006"
+- Test with: `python tests/test_connection.py`
+- Firewall may block the port; allow Python through Windows Firewall
+
+**Port conflict at startup?**
+- If you see "Cannot bind to port 6006", another bridge is running
+- Kill the other process or use `--tcp-port 6007` for this instance
 
 ## Example NMEA Output
 
