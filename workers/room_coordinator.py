@@ -95,10 +95,26 @@ def classify_task(task: dict[str, Any]) -> str | None:
     """
     Determine which model should handle the task based on its *task_type* field.
 
+    First checks the dynamic routing table from *tasks.json* (set by the model
+    scheduler), falling back to the static MODEL_ROUTING dict.
+
     Returns the model name string (e.g. "seed2") or *None* if the task type is
     unrecognised.
     """
     task_type = task.get("task_type", "").lower().strip()
+
+    # Check dynamic routing from the scheduler first
+    try:
+        if TASKS_PATH.exists():
+            with open(TASKS_PATH, "r") as f:
+                data = json.load(f)
+            dynamic_models = data.get("models", {})
+            if task_type in dynamic_models:
+                return dynamic_models[task_type]
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    # Fall back to static routing
     model = MODEL_ROUTING.get(task_type)
     if model is None:
         log.warning("Unknown task_type=%r for task %s", task_type, task.get("id", "?"))
