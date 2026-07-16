@@ -73,20 +73,177 @@ def scan_nmea_ports(baud: int = DEFAULT_BAUD, specific: list[str] | None = None)
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  Serial reader (async)
+#  Shared-mode serial reader (Windows) — coexists with TZ Pro/Nobeltec
 # ══════════════════════════════════════════════════════════════════════
+
+try:
+    import ctypes, struct
+    from ctypes import wintypes
+    import serial
+    _kernel32 = ctypes.windll.kernel32
+    _GENERIC_READ = 0x80000000
+    _FILE_SHARE_READ = 1
+    _FILE_SHARE_WRITE = 2
+    _OPEN_EXISTING = 3
+    _INVALID_HANDLE = ctypes.c_void_p(-1)
+    _kernel32.CreateFileA.argtypes = [wintypes.LPCSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
+    _kernel32.CreateFileA.restype = ctypes.c_void_p
+    _kernel32 = ctypes.windll.kernel32
+
+    class _DCB(ctypes.Structure):
+        _fields_ = [
+            ("DCBlength", wintypes.DWORD),
+            ("BaudRate", wintypes.DWORD),
+            ("fBinary", wintypes.DWORD, 1),
+            ("fParity", wintypes.DWORD, 1),
+            ("fOutxCtsFlow", wintypes.DWORD, 1),
+            ("fOutxDsrFlow", wintypes.DWORD, 1),
+            ("fDtrControl", wintypes.DWORD, 2),
+            ("fDsrSensitivity", wintypes.DWORD, 1),
+            ("fTXContinueOnXoff", wintypes.DWORD, 1),
+            ("fOutX", wintypes.DWORD, 1),
+            ("fInX", wintypes.DWORD, 1),
+            ("fErrorChar", wintypes.DWORD, 1),
+            ("fNull", wintypes.DWORD, 1),
+            ("fRtsControl", wintypes.DWORD, 2),
+            ("fAbortOnError", wintypes.DWORD, 1),
+            ("fDummy2", wintypes.DWORD, 17),
+            ("wReserved", wintypes.WORD),
+            ("XonLim", wintypes.WORD),
+            ("XoffLim", wintypes.WORD),
+            ("ByteSize", wintypes.BYTE),
+            ("Parity", wintypes.BYTE),
+            ("StopBits", wintypes.BYTE),
+            ("XonChar", ctypes.c_char),
+            ("XoffChar", ctypes.c_char),
+            ("ErrorChar", ctypes.c_char),
+            ("EofChar", ctypes.c_char),
+            ("EvtChar", ctypes.c_char),
+            ("wReserved1", wintypes.WORD),
+        ]
+
+    class _COMMTIMEOUTS(ctypes.Structure):
+        _fields_ = [
+            ("ReadIntervalTimeout", wintypes.DWORD),
+            ("ReadTotalTimeoutMultiplier", wintypes.DWORD),
+            ("ReadTotalTimeoutConstant", wintypes.DWORD),
+            ("WriteTotalTimeoutMultiplier", wintypes.DWORD),
+            ("WriteTotalTimeoutConstant", wintypes.DWORD),
+        ]
+
+    _SHARED_MODE_OK = True
+except Exception as e:
+    log.warning("Shared-mode serial not available: %s", e)
+    _SHARED_MODE_OK = False
+
+
+class _SharedSerial:
+    """Minimal shared-mode COM port reader compatible with the pyserial interface.
+
+    Opens the port with FILE_SHARE_READ|FILE_SHARE_WRITE so TZ Pro / Nobeltec
+    can simultaneously receive GPS data from the same COM port.
+    """
+    def __init__(self, device: str, baud: int = 4800, timeout: float = 1):
+        self.device = device
+        self._handle = None
+        if not _SHARED_MODE_OK:
+            raise RuntimeError("ctypes/kernel32 not available (not Windows?)")
+
+        # Win32: CreateFile with share flags
+        name = f"\\\\.\\{device}" if not device.startswith("\\\\.\\") else device
+        h = _kernel32.CreateFileA(
+            name.encode("ascii"),
+            _GENERIC_READ,
+            _FILE_SHARE_READ | _FILE_SHARE_WRITE,
+            None,
+            _OPEN_EXISTING,
+            0,
+            None,
+        )
+        if h is None or h == _INVALID_HANDLE or not h:
+            err = ctypes.get_last_error()
+            raise serial.SerialException(
+                f"Cannot open {device} in shared mode (win32 error {err})"
+            )
+        self._handle = h
+
+        # Read current DCB (TZ Pro already set it up)
+        # If this fails, the port may already be in a good state — continue anyway
+        try:
+            dcb = _DCB()
+            dcb.DCBlength = ctypes.sizeof(_DCB)
+            _kernel32.GetCommState(self._handle, ctypes.byref(dcb))
+        except Exception as e:
+            log.warning("GetCommState: %s — continuing with default DCB", e)
+
+        # Timeouts: 1000ms read interval timeout
+        try:
+            to = _COMMTIMEOUTS()
+            to.ReadIntervalTimeout = 1000
+            to.ReadTotalTimeoutMultiplier = 0
+            to.ReadTotalTimeoutConstant = 1000
+            _kernel32.SetCommTimeouts(self._handle, ctypes.byref(to))
+        except Exception as e:
+            log.warning("SetCommTimeouts: %s — continuing anyway", e)
+
+        self._buf = ctypes.create_string_buffer(4096)
+        self._rd = ctypes.c_uint32(0)
+        self._acc = b""
+        self.baud = baud
+        log.info("Opened %s (%d baud, SHARED mode)", device, baud)
+
+    def readline(self) -> bytes:
+        """Read one line (blocking, with 1s timeout via CommTimeouts)."""
+        while True:
+            idx = self._acc.find(b"\n")
+            if idx >= 0:
+                line = self._acc[: idx + 1]
+                self._acc = self._acc[idx + 1 :]
+                return line
+            r = _kernel32.ReadFile(
+                self._handle, self._buf, 4096, ctypes.byref(self._rd), None
+            )
+            if r and self._rd.value:
+                self._acc += self._buf.raw[: self._rd.value]
+            else:
+                # No data available within timeout — return whatever we have or empty
+                if self._acc:
+                    line = self._acc
+                    self._acc = b""
+                    if not line.endswith(b"\n"):
+                        line += b"\n"
+                    return line
+                # Simulate b""
+                return b""
+
+    def close(self) -> None:
+        if self._handle is not None:
+            _kernel32.CloseHandle(self._handle)
+            self._handle = None
+
 
 async def read_serial(device: str, baud: int) -> None:
     """Read NMEA from a serial port and broadcast to all TCP clients.
 
-    Automatically reconnects if the device is disconnected and
-    re-plugged (e.g., USB GPS temporarily unplugged).
+    On Windows, opens in **shared mode** so TZ Pro / Nobeltec can also
+    read the same COM port simultaneously.
+
+    Automatically reconnects on disconnect / replug.
     """
-    import serial
     while True:
+        ser = None
         try:
-            ser = serial.Serial(device, baud, timeout=1)
-            log.info("Opened %s (%d baud)", device, baud)
+            # Try shared mode first (Windows) — lets TZ Pro coexist
+            if IS_WINDOWS and _SHARED_MODE_OK:
+                try:
+                    ser = _SharedSerial(device, baud)
+                except (serial.SerialException, RuntimeError):
+                    log.warning("Shared-mode open failed, falling back to exclusive...")
+                    ser = serial.Serial(device, baud, timeout=1)
+            else:
+                ser = serial.Serial(device, baud, timeout=1)
+
+            log.info("Reading from %s (%d baud)", device, baud)
         except serial.SerialException as e:
             log.warning("Cannot open %s: %s — retrying in 5s", device, e)
             await asyncio.sleep(5)
@@ -106,7 +263,8 @@ async def read_serial(device: str, baud: int) -> None:
             log.error("Unexpected error on %s: %s", device, e)
         finally:
             try:
-                ser.close()
+                if ser:
+                    ser.close()
             except Exception:
                 pass
 
@@ -173,7 +331,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--tcp-port", type=int, default=DEFAULT_TCP_PORT,
         dest="tcp_port",
-        help=f"TCP listen port (default: {DEFAULT_TCP_PORT})",
+        help=f"Base TCP listen port (default: {DEFAULT_TCP_PORT})",
+    )
+    p.add_argument(
+        "--num-ports", type=int, default=2,
+        dest="num_ports",
+        help="Number of TCP ports to serve (default: 2 — 6006, 6007)",
     )
     p.add_argument(
         "--scan", action="store_true",
@@ -249,30 +412,40 @@ async def main() -> None:
         log.error("No ports to read. Use --ports to specify or check connections.")
         sys.exit(1)
 
+    ports_str = [str(args.tcp_port + i) for i in range(args.num_ports)]
     log.info("Reading NMEA from: %s", ", ".join(ports))
-    log.info("Broadcasting on TCP port %d", args.tcp_port)
-    log.info("Connect apps to: localhost:%d", args.tcp_port)
+    log.info("Broadcasting on TCP ports: %s", ", ".join(ports_str))
+    log.info("Connect apps to: localhost:%s", ", ".join(ports_str))
 
-    # ── Start TCP server FIRST (so we fail fast on port conflict) ──
-    try:
-        server = await asyncio.start_server(
-            handle_client, "127.0.0.1", args.tcp_port
-        )
-    except OSError as e:
-        log.error("Cannot bind to port %d: %s", args.tcp_port, e)
-        log.error("Is another bridge instance already running?")
+    # ── Start TCP servers FIRST (so we fail fast on port conflict) ──
+    servers = []
+    for i in range(args.num_ports):
+        port = args.tcp_port + i
+        try:
+            server = await asyncio.start_server(
+                handle_client, "127.0.0.1", port
+            )
+            servers.append(server)
+        except OSError as e:
+            log.error("Cannot bind to port %d: %s", port, e)
+            log.error("Is another bridge instance already running?")
+
+    if not servers:
+        log.error("No TCP ports could be bound. Exiting.")
         sys.exit(1)
 
     # ── Start serial readers ───────────────────────────────────────
     tasks = [read_serial(p, args.baud) for p in ports]
-    tasks.append(server.serve_forever())
+    for s in servers:
+        tasks.append(s.serve_forever())
 
     try:
         await asyncio.gather(*tasks)
     except KeyboardInterrupt:
         log.info("Shutting down...")
     finally:
-        server.close()
+        for s in servers:
+            s.close()
         log.info("Stopped.")
 
 

@@ -25,8 +25,11 @@ D=chr(176)  # degree symbol
 
 # ── NMEA reader (shared mode Windows API) ──
 GENERIC_READ=0x80000000;FILE_SHARE_READ=1;FILE_SHARE_WRITE=2;OPEN_EXISTING=3
-INVALID_HANDLE=ctypes.c_void_p(-1).value
+INVALID_HANDLE=ctypes.c_void_p(-1)
+from ctypes import wintypes
 kernel32=ctypes.windll.kernel32
+kernel32.CreateFileA.argtypes=[wintypes.LPCSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p]
+kernel32.CreateFileA.restype=ctypes.c_void_p
 
 _nmea_handle=None; _nmea_lock=threading.Lock()
 _nmea_latest={"lat":None,"lon":None,"sog":None,"cog":None,"alt":None,"sats":0,"quality":0,"ts":0}
@@ -47,7 +50,7 @@ def _open_nmea():
         log.warning(f"NMEA: TCP splitter not available ({e}), trying COM6...")
     # Fallback: shared-mode COM6
     h=kernel32.CreateFileA(b"\\\\.\\COM6",GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,None,OPEN_EXISTING,0,None)
-    if h==INVALID_HANDLE: log.warning("NMEA: can't open COM6 (locked by TZ Pro)");return False
+    if h is None or h==INVALID_HANDLE or not h: log.warning("NMEA: can't open COM6 (locked by TZ Pro)");return False
     _nmea_handle=h
     dcb=ctypes.create_string_buffer(28)
     struct.pack_into('IHHIIHHHHHHBBBBB',dcb,0,28,4800,0,0,0,0,0,0,0,0,0,8,0,0,0,0)
